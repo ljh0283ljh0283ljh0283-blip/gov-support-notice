@@ -1,0 +1,10 @@
+{
+  "regions": ["icn1"],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "includeFiles": "{config.json,gov_support_watch.py,data/seen.json}"
+    }
+  },
+  "rewrites": [{ "source": "/", "destination": "/api/index" }]
+}

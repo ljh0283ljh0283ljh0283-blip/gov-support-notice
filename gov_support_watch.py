@@ -15,7 +15,7 @@ import smtplib
 import sys
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -28,6 +28,7 @@ GBSA_NAME = "경기도경제과학진흥원"
 CATEGORY_ORDER = ["기술", "경영", "수출", "금융", "인력", "내수", "창업", "제도", "동반성장", "소상공", "기타"]
 STATUS_KO = {"apply": "접수중", "ready": "준비중"}
 PAGE_UNIT = 200
+KST = timezone(timedelta(hours=9))
 # 경기도 31개 시·군 (공고 제목에 이름이 있으면 그 지역 전용 공고로 본다)
 SIGUN = ["가평", "고양", "과천", "광명", "광주", "구리", "군포", "김포", "남양주", "동두천", "부천", "성남",
          "수원", "시흥", "안산", "안성", "안양", "양주", "양평", "여주", "연천", "오산", "용인", "의왕",
@@ -162,7 +163,7 @@ def table(items, soon, empty="해당 공고가 없습니다."):
     return f'<div class="blk">{tbl}<p class="empty"{" hidden" if items else ""}>{empty}</p></div>'
 
 
-def build_html(items, cfg, today, for_mail=False, share=False):
+def build_html(items, cfg, today, for_mail=False, share=False, stamp=None, live_tab=False):
     soon = int(cfg.get("마감임박_일수", 7))
     new = [i for i in items if i["new"]]
     matched = [i for i in items if i["keywords"]]
@@ -186,6 +187,8 @@ def build_html(items, cfg, today, for_mail=False, share=False):
                  + "".join(f'<button class="rtab" data-r="{esc(r)}" role="tab" aria-selected="false">{esc(r)} '
                            f'<span>{sum(in_region(i, r) for i in items)}</span></button>' for r in regions)
                  + '<button class="rtab" data-r="kw" role="tab" aria-selected="false">키워드 검색</button>'
+                 + ('<button class="rtab live" data-live="1" type="button" title="이지비즈에서 지금 공고를 다시 가져옵니다">'
+                    '최신 정보 불러오기</button>' if live_tab else '')
                  + '<p class="rnote" id="rnote">지역 탭은 경기도 공통 공고와 그 시·군 이름이 들어간 공고를 보여주고, '
                    '다른 시·군 전용 공고는 뺍니다.</p></div>'
                  + '<div class="kwbox" id="kwbox" hidden>'
@@ -221,7 +224,9 @@ def build_html(items, cfg, today, for_mail=False, share=False):
 
     script = "" if for_mail else """<script>
 const $$=s=>[...document.querySelectorAll(s)];
-const tabs=$$('.rtab'),chips=$$('.chip'),nb=document.getElementById('onlynew');
+$$('.rtab[data-live]').forEach(b=>b.onclick=()=>{b.textContent='불러오는 중…';b.disabled=true;
+  location.href=location.pathname+'?live='+Date.now();});
+const tabs=$$('.rtab:not([data-live])'),chips=$$('.chip'),nb=document.getElementById('onlynew');
 let reg='*',cat='*';
 const kwq=document.getElementById('kwq'),kwbox=document.getElementById('kwbox'),
   kwres=document.getElementById('kwres'),rnote=document.getElementById('rnote'),kwHelp=kwres?kwres.textContent:'';
@@ -303,6 +308,9 @@ td.dd{width:80px;text-align:center}
  border-bottom:3px solid transparent;margin-bottom:-2px}
 .rtab span{font-weight:normal;font-size:12px;font-variant-numeric:tabular-nums}
 .rtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.rtab.live{margin-left:auto;align-self:center;margin-bottom:6px;border:1px solid var(--accent);border-radius:16px;
+ padding:5px 14px;font-size:13px;color:var(--accent);background:var(--panel)}
+.rtab.live:hover{background:var(--accent);color:var(--accent-fg)} .rtab.live:disabled{opacity:.7;cursor:wait}
 .rtab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .rnote{flex-basis:100%;margin:6px 0 8px;font-size:12px;color:var(--muted)}
 .kwbox{display:flex;flex-direction:column;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
@@ -325,7 +333,7 @@ td.dd{width:80px;text-align:center}
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>{css}</style><div class="wrap">
 <h1>경기 지원사업 공고 모아보기</h1>
-<div class="sub">{today:%Y년 %m월 %d일} 기준 · 출처: {esc(scope)} · NEW = 지난번 확인 이후 새로 올라온 공고</div>
+<div class="sub">{esc(stamp or today.strftime('%Y년 %m월 %d일'))} 기준 · 출처: {esc(scope)} · NEW = 지난번 확인 이후 새로 올라온 공고</div>
 {body}
 <p class="foot">사업명을 누르면 이지비즈 공고 상세 페이지로 이동합니다.</p>
 </div>{script}"""
@@ -370,13 +378,24 @@ def send_mail(cfg, items, today, attach_path):
     print(f"메일 발송 완료 → {', '.join(to)}")
 
 
+# ---------------------------------------------------------------- 실시간 페이지 (Vercel)
+def render_live():
+    """이지비즈에서 지금 공고를 가져와 웹페이지 HTML을 만든다. 기록 파일은 읽기만 한다."""
+    cfg = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+    seen_path = BASE / "data" / "seen.json"
+    seen = json.loads(seen_path.read_text(encoding="utf-8")) if seen_path.exists() else {}
+    now = datetime.now(KST)
+    items = organize(fetch_all(), cfg, seen, now.date())
+    return build_html(items, cfg, now.date(), stamp=now.strftime("%Y년 %m월 %d일 %H:%M"), live_tab=True)
+
+
 # ---------------------------------------------------------------- main
 def main():
     cfg = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
     seen_path = BASE / "data" / "seen.json"
     seen_path.parent.mkdir(exist_ok=True)
     seen = json.loads(seen_path.read_text(encoding="utf-8")) if seen_path.exists() else {}
-    today = date.today()
+    today = datetime.now(KST).date()
 
     raw = fetch_all()
     items = organize(raw, cfg, seen, today)

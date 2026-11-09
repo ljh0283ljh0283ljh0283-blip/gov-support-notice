@@ -1,7 +1,10 @@
 # 지원사업 공고 모아보기
 
-**공개 페이지: https://ljh0283ljh0283ljh0283-blip.github.io/gov-support-notice/**
-(GitHub Actions가 한국시간 평일 오전 8:30에 자동 갱신 · 저장소 Actions 탭 → "지원사업 공고 갱신" → Run workflow 로 즉시 갱신)
+**공개 페이지: https://gov-support-notice.vercel.app/**
+- 접속하면 Vercel(서울 서버)이 이지비즈에서 공고를 가져와 보여줍니다. (10분 동안은 같은 결과 재사용)
+- 화면의 **'최신 정보 불러오기'** 를 누르면 그 순간의 공고를 다시 가져옵니다.
+- NEW 표시 기준(`data/seen.json`)은 GitHub Actions가 평일 오전 8:30에 갱신합니다.
+- 예전 주소(…github.io/gov-support-notice/)는 새 주소로 자동 이동합니다.
 
 경기도경제과학진흥원이 운영하는 **경기기업비서(이지비즈, egbiz.or.kr)** 의 지원사업을
 분야별(기술·경영·수출·금융·인력·내수·창업·제도·동반성장·소상공)로 정리해서 보여줍니다.

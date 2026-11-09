@@ -1,0 +1,7 @@
+reports
+share
+docs
+pages
+data/run_log.txt
+*.html
+run.bat
