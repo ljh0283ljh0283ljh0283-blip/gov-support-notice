@@ -12,12 +12,15 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import gov_support_watch as g  # noqa: E402
 
+# config.json과 NEW 기록(data/seen.json)은 GitHub 저장소의 최신 파일을 읽는다 → 고치면 다시 배포하지 않아도 반영
+GITHUB_RAW = "https://raw.githubusercontent.com/ljh0283ljh0283ljh0283-blip/gov-support-notice/main/"
+
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         live = "live" in parse_qs(urlparse(self.path).query)
         try:
-            page, code = g.render_live(), 200
+            page, code = g.render_live(GITHUB_RAW), 200
         except Exception as e:  # 이지비즈 접속 실패 등
             page = ('<!doctype html><meta charset="utf-8"><title>경기 지원사업 공고</title>'
                     '<p style="font-family:sans-serif;padding:24px">이지비즈에서 공고를 가져오지 못했습니다. '

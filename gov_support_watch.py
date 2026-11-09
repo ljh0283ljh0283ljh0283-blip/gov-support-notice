@@ -379,11 +379,23 @@ def send_mail(cfg, items, today, attach_path):
 
 
 # ---------------------------------------------------------------- 실시간 페이지 (Vercel)
-def render_live():
+def _load_json(rel, remote_base, default):
+    """GitHub에 올라간 최신 파일을 먼저 읽고, 안 되면 함께 배포된 파일을 읽는다."""
+    if remote_base:
+        try:
+            req = urllib.request.Request(remote_base + rel, headers={"User-Agent": "gov-support-watch"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except Exception:
+            pass
+    path = BASE / rel
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+
+
+def render_live(remote_base=None):
     """이지비즈에서 지금 공고를 가져와 웹페이지 HTML을 만든다. 기록 파일은 읽기만 한다."""
-    cfg = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
-    seen_path = BASE / "data" / "seen.json"
-    seen = json.loads(seen_path.read_text(encoding="utf-8")) if seen_path.exists() else {}
+    cfg = _load_json("config.json", remote_base, {})
+    seen = _load_json("data/seen.json", remote_base, {})
     now = datetime.now(KST)
     items = organize(fetch_all(), cfg, seen, now.date())
     return build_html(items, cfg, now.date(), stamp=now.strftime("%Y년 %m월 %d일 %H:%M"), live_tab=True)
