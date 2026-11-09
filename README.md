@@ -1,5 +1,8 @@
 # 지원사업 공고 모아보기
 
+**공개 페이지: https://ljh0283ljh0283ljh0283-blip.github.io/gov-support-notice/**
+(GitHub Actions가 한국시간 평일 오전 8:30에 자동 갱신 · 저장소 Actions 탭 → "지원사업 공고 갱신" → Run workflow 로 즉시 갱신)
+
 경기도경제과학진흥원이 운영하는 **경기기업비서(이지비즈, egbiz.or.kr)** 의 지원사업을
 분야별(기술·경영·수출·금융·인력·내수·창업·제도·동반성장·소상공)로 정리해서 보여줍니다.
 
