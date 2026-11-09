@@ -126,12 +126,16 @@ def esc(s):
 
 def dday_badge(it, soon):
     if it["until_budget"]:
-        return '<span class="b gray">예산소진시</span>'
+        return '<span class="due">예산 소진 시</span>'
     if it["dday"] is None:
         return ""
-    cls = "red" if it["dday"] <= soon else "gray"
-    label = "오늘마감" if it["dday"] == 0 else f"D-{it['dday']}"
-    return f'<span class="b {cls}">{label}</span>'
+    cls = "due soon" if it["dday"] <= soon else "due"
+    label = "오늘 마감" if it["dday"] == 0 else f"D-{it['dday']}"
+    return f'<span class="{cls}">{label}</span>'
+
+
+def short_date(s):
+    return s[5:].replace("-", ".") if len(s) == 10 else s
 
 
 def is_soon(it, soon):
@@ -144,21 +148,24 @@ def in_region(it, region):
 
 
 def row(it, soon):
-    period = "예산 소진 시까지" if it["until_budget"] else f'{esc(it["start"])} ~ {esc(it["end"])}'
-    tags = "".join(f'<span class="kw">{esc(k)}</span>' for k in it["keywords"])
-    new = '<span class="b new">NEW</span>' if it["new"] else ""
-    gbsa = '<span class="b gbsa">진흥원</span>' if it["gbsa"] else ""
-    reg = "".join(f'<span class="reg">{esc(r)}</span>' for r in it["regions"])
+    period = "예산 소진 시까지" if it["until_budget"] else f'{short_date(it["start"])} ~ {short_date(it["end"])}'
+    marks = ('<span class="mk new">[새글]</span>' if it["new"] else "") + \
+            ('<span class="mk">[진흥원]</span>' if it["gbsa"] else "") + \
+            "".join(f'<span class="mk">[{esc(r)}]</span>' for r in it["regions"])
+    kw = f'<span class="kw">관심: {esc("·".join(it["keywords"]))}</span>' if it["keywords"] else ""
     return (f'<tr data-cat="{esc(it["category"])}" data-new="{int(it["new"])}" data-reg="{esc(",".join(it["regions"]))}"'
             f' data-soon="{int(is_soon(it, soon))}" data-kw="{int(bool(it["keywords"]))}">'
-            f'<td class="t"><a href="{esc(it["url"])}" target="_blank">{esc(it["title"])}</a>'
-            f'<div class="meta">{new}{gbsa}{reg}<span class="cat">{esc(it["category"])}</span>{tags}</div></td>'
-            f'<td class="org">{esc(it["org"])}</td><td class="per">{period}</td>'
+            f'<td class="no"></td><td class="c">{esc(it["category"])}</td>'
+            f'<td class="t">{marks}<a href="{esc(it["url"])}" target="_blank" rel="noopener">{esc(it["title"])}</a>'
+            f'<span class="sm"><span class="c2">{esc(it["category"])}</span>{esc(period)}</span>{kw}</td>'
+            f'<td class="org">{esc(it["org"])}</td><td class="per">{esc(period)}</td>'
             f'<td class="dd">{dday_badge(it, soon)}</td></tr>')
 
 
 def table(items, soon, empty="해당 공고가 없습니다."):
-    tbl = ('<div class="tw"><table><thead><tr><th>사업명</th><th>기관</th><th>접수기간</th><th>마감</th></tr></thead><tbody>'
+    tbl = ('<div class="tw"><table><colgroup><col class="w-no"><col class="w-c"><col><col class="w-org"><col class="w-per">'
+           '<col class="w-dd"></colgroup><thead><tr><th class="no">번호</th><th class="c">분야</th><th>사업명</th>'
+           '<th class="org">기관</th><th class="per">접수기간</th><th class="dd">마감</th></tr></thead><tbody>'
            + "".join(row(i, soon) for i in items) + "</tbody></table></div>") if items else ""
     return f'<div class="blk">{tbl}<p class="empty"{" hidden" if items else ""}>{empty}</p></div>'
 
@@ -174,32 +181,35 @@ def build_html(items, cfg, today, for_mail=False, share=False, stamp=None, live_
     cats = [c for c in CATEGORY_ORDER if c in by_cat] + [c for c in by_cat if c not in CATEGORY_ORDER]
 
     scope = "경기도경제과학진흥원 직접 공고" if cfg.get("진흥원_공고만") else "경기기업비서(이지비즈) 분야별지원사업"
-    stats = "".join(f'<div class="stat"><b id="{sid}">{n}</b><span>{l}</span></div>' for sid, n, l in
-                    [("s-total", len(items), "접수중·준비중"), ("s-new", len(new), "새 공고"),
-                     ("s-soon", len(closing), f"{soon}일 내 마감"), ("s-kw", len(matched), "맞춤 키워드")])
+    stats = (f'<p class="summary">접수 중인 공고 <b id="s-total">{len(items)}</b>건 '
+             f'<span class="sep">·</span> 새 공고 <b id="s-new">{len(new)}</b>건 '
+             f'<span class="sep">·</span> {soon}일 안에 마감 <b id="s-soon" class="red">{len(closing)}</b>건 '
+             f'<span class="sep">·</span> 관심 키워드 <b id="s-kw">{len(matched)}</b>건</p>')
     regions = [r for r in cfg.get("지역탭", []) if r in SIGUN]
     rtabs = ""
     if not for_mail:
-        quick = "".join(f'<button type="button" class="kwq" data-q="{esc(k)}">{esc(k)}</button>'
-                        for k in cfg.get("관심키워드", []) if k)
-        rtabs = ('<div class="rtabs" role="tablist" aria-label="보기">'
-                 f'<button class="rtab on" data-r="*" role="tab" aria-selected="true">경기 전체 <span>{len(items)}</span></button>'
+        quick = '<span class="sep">·</span>'.join(f'<button type="button" class="kwq" data-q="{esc(k)}">{esc(k)}</button>'
+                                                  for k in cfg.get("관심키워드", []) if k)
+        rtabs = ('<div class="tabbar"><div class="rtabs" role="tablist" aria-label="보기">'
+                 f'<button class="rtab on" data-r="*" role="tab" aria-selected="true">경기 전체 <span>({len(items)})</span></button>'
                  + "".join(f'<button class="rtab" data-r="{esc(r)}" role="tab" aria-selected="false">{esc(r)} '
-                           f'<span>{sum(in_region(i, r) for i in items)}</span></button>' for r in regions)
-                 + '<button class="rtab" data-r="kw" role="tab" aria-selected="false">키워드 검색</button>'
+                           f'<span>({sum(in_region(i, r) for i in items)})</span></button>' for r in regions)
+                 + '<button class="rtab" data-r="kw" role="tab" aria-selected="false">키워드 검색</button></div>'
                  + ('<button class="rtab live" data-live="1" type="button" title="이지비즈에서 지금 공고를 다시 가져옵니다">'
                     '최신 정보 불러오기</button>' if live_tab else '')
-                 + '<p class="rnote" id="rnote">지역 탭은 경기도 공통 공고와 그 시·군 이름이 들어간 공고를 보여주고, '
-                   '다른 시·군 전용 공고는 뺍니다.</p></div>'
-                 + '<div class="kwbox" id="kwbox" hidden>'
-                   '<label for="kwq">찾을 단어</label>'
+                 + '</div>'
+                 + '<p class="rnote" id="rnote">※ 지역 탭에는 경기도 공통 공고와 그 시·군 이름이 들어간 공고만 나오고, '
+                   '다른 시·군 전용 공고는 빠집니다.</p>'
+                 + '<form class="kwbox" id="kwbox" hidden onsubmit="return false">'
+                   '<div class="kwrow"><label for="kwq">검색어</label>'
                    '<input id="kwq" type="search" autocomplete="off" placeholder="예: 수출지원, 스마트공장">'
-                   f'<div class="kwquick"><span>자주 찾는 단어</span>{quick}</div>'
-                   '<p class="rnote" id="kwres">사업명·분야·기관에서 찾습니다. \'수출지원\'처럼 끝에 붙은 지원·사업은 떼고 찾고, '
-                   '띄어 쓰면 모든 단어가 들어간 공고, 쉼표(,)로 나누면 하나라도 들어간 공고를 보여줍니다.</p></div>')
+                   '<button type="submit" class="kwgo">검색</button></div>'
+                   f'<p class="kwquick">추천 검색어 : {quick}</p>'
+                   '<p class="rnote" id="kwres">※ 사업명·분야·기관에서 찾습니다. \'수출지원\'처럼 끝에 붙은 지원·사업은 떼고 찾고, '
+                   '띄어 쓰면 모든 단어가 들어간 공고, 쉼표(,)로 나누면 하나라도 들어간 공고를 보여줍니다.</p></form>')
 
     if for_mail:  # 메일 본문은 새 공고만 분야별로 짧게
-        body = f'<div class="stats">{stats}</div>'
+        body = stats
         new_by_cat = {}
         for i in new:
             new_by_cat.setdefault(i["category"], []).append(i)
@@ -209,14 +219,14 @@ def build_html(items, cfg, today, for_mail=False, share=False, stamp=None, live_
             body += f'<h2>{esc(c)} <small>{len(new_by_cat[c])}건</small></h2>' + table(new_by_cat[c], soon)
         body += '<p class="foot">전체 목록은 첨부한 리포트 파일을 열어 보세요.</p>'
     else:
-        chips = f'<button class="chip on" data-f="*">전체 <span class="n">{len(items)}</span></button>' + "".join(
-            f'<button class="chip" data-f="{esc(c)}">{esc(c)} <span class="n">{len(by_cat[c])}</span></button>' for c in cats)
-        body = (f'{rtabs}<div class="stats">{stats}</div>'
-                f'<h2>우리 회사 맞춤 <small>관심 키워드: {esc(", ".join(cfg.get("관심키워드", [])))}</small></h2>'
+        chips = f'<button class="chip on" data-f="*">전체(<span class="n">{len(items)}</span>)</button>' + "".join(
+            f'<button class="chip" data-f="{esc(c)}">{esc(c)}(<span class="n">{len(by_cat[c])}</span>)</button>' for c in cats)
+        body = (f'{rtabs}{stats}'
+                f'<h2>우리 회사 관심 공고 <small>관심 키워드 : {esc(", ".join(cfg.get("관심키워드", [])))}</small></h2>'
                 + table(matched, soon, "관심 키워드에 맞는 공고가 없습니다.")
-                + f'<h2>마감 임박 <small>{soon}일 이내</small></h2>' + table(closing, soon)
-                + f'<h2>분야별 전체</h2><div class="chips">{chips}'
-                  f'<label class="onlynew"><input type="checkbox" id="onlynew"> 새 공고만</label></div>'
+                + f'<h2>마감 임박 공고 <small>{soon}일 이내</small></h2>' + table(closing, soon)
+                + f'<h2>분야별 전체 공고</h2><div class="chips">{chips}'
+                  f'<label class="onlynew"><input type="checkbox" id="onlynew"> 새 공고만 보기</label></div>'
                 + '<div id="all">' + "".join(
                     f'<section data-cat="{esc(c)}"><h3>{esc(c)} <small><span class="n">{len(by_cat[c])}</span>건</small></h3>'
                     + table(by_cat[c], soon) + "</section>" for c in cats)
@@ -266,76 +276,96 @@ nb.onchange=apply;
 </script>"""
 
     css = """
-/* 공고 게시판 느낌: 차분한 청록 잉크 + 행정문서 표 */
-:root{--bg:#f4f6f5;--panel:#ffffff;--line:#dfe5e3;--fg:#1c2624;--muted:#5d6b68;--accent:#0f6b5c;
- --accent-fg:#ffffff;--soft:#e3f0ec;--warn:#b42318;--warn-fg:#ffffff;--kw-bg:#fdf1d3;--kw-fg:#6f4e00;
- --gbsa:#4b4fa8;--chip-bg:#ffffff;--gray-bg:#e9edec}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#121816;--panel:#1a2220;--line:#2c3734;
- --fg:#e4ebe9;--muted:#9aa8a5;--accent:#4cc2a8;--accent-fg:#0d1513;--soft:#1f3631;--warn:#f0705f;--warn-fg:#1a0d0b;
- --kw-bg:#3a3018;--kw-fg:#f2d48b;--gbsa:#9da1ef;--chip-bg:#1a2220;--gray-bg:#26302d;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#121816;--panel:#1a2220;--line:#2c3734;--fg:#e4ebe9;--muted:#9aa8a5;--accent:#4cc2a8;
- --accent-fg:#0d1513;--soft:#1f3631;--warn:#f0705f;--warn-fg:#1a0d0b;--kw-bg:#3a3018;--kw-fg:#f2d48b;--gbsa:#9da1ef;
- --chip-bg:#1a2220;--gray-bg:#26302d;color-scheme:dark}
-body{font-family:'Pretendard','Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--fg);
- margin:0;padding-block:24px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.wrap{max-width:1080px;margin:0 auto}
-h1{font-size:24px;margin:0 0 6px;text-wrap:balance} .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
-h2{font-size:17px;margin:30px 0 10px;border-left:4px solid var(--accent);padding-left:8px;text-wrap:balance}
-h3{font-size:15px;margin:18px 0 8px} small{color:var(--muted);font-weight:normal;font-size:12px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
-.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px}
-.stat b{display:block;font-size:26px;color:var(--accent);font-variant-numeric:tabular-nums} .stat span{font-size:12px;color:var(--muted)}
-.tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{background:var(--soft);text-align:left;padding:8px;font-weight:600;color:var(--fg)}
-td{padding:9px 8px;border-top:1px solid var(--line);vertical-align:top}
-td.t a{color:var(--fg);text-decoration:none;font-weight:600} td.t a:hover,td.t a:focus-visible{color:var(--accent);text-decoration:underline}
-td.org{color:var(--muted);width:200px} td.per{white-space:nowrap;color:var(--muted);width:170px;font-variant-numeric:tabular-nums}
-td.dd{width:80px;text-align:center}
-.meta{margin-top:4px;display:flex;gap:4px;flex-wrap:wrap}
-.b,.kw,.cat{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px}
-.b.new{background:var(--accent);color:var(--accent-fg)} .b.gbsa{background:var(--gbsa);color:var(--accent-fg)}
-.b.red{background:var(--warn);color:var(--warn-fg)} .b.gray{background:var(--gray-bg);color:var(--muted)}
-.kw{background:var(--kw-bg);color:var(--kw-fg)} .cat{background:var(--soft);color:var(--accent)}
-.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
-.chip{border:1px solid var(--line);background:var(--chip-bg);color:var(--fg);border-radius:16px;padding:5px 12px;cursor:pointer;font-size:13px;font-family:inherit}
-.chip.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
-.chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.onlynew{margin-left:auto;font-size:13px}
+/* 관공서 공고 게시판: 흰 바탕, 진한 윗선 표, 파란 링크, 빨간 마감 표시. 장식 없이 표와 글자로만 구분한다 */
+:root{--bg:#ffffff;--fg:#222222;--muted:#6b6b6b;--line:#dcdcdc;--rule:#333333;--head:#f6f6f4;--tab:#f1f1ef;
+ --link:#1d4e89;--visited:#5a3d86;--red:#c4161c;--hl:#fff7d6;
+ --serif:'Noto Serif KR','Batang','AppleMyungjo',serif;
+ --sans:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-serif}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#17181a;--fg:#e4e4e1;--muted:#9c9c98;
+ --line:#34363a;--rule:#b9b9b5;--head:#202124;--tab:#1d1e21;--link:#8db4ea;--visited:#c0a6e6;--red:#ff6b6b;
+ --hl:#3a3420;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#17181a;--fg:#e4e4e1;--muted:#9c9c98;--line:#34363a;--rule:#b9b9b5;--head:#202124;
+ --tab:#1d1e21;--link:#8db4ea;--visited:#c0a6e6;--red:#ff6b6b;--hl:#3a3420;color-scheme:dark}
+body{font-family:var(--sans);font-size:14px;line-height:1.55;background:var(--bg);color:var(--fg);margin:0;
+ padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 [hidden]{display:none!important}
-.rtabs{display:flex;flex-wrap:wrap;gap:0;align-items:flex-end;border-bottom:2px solid var(--line);margin-bottom:16px}
-.rtab{border:0;background:none;color:var(--muted);font:inherit;font-size:15px;font-weight:600;padding:8px 18px;cursor:pointer;
- border-bottom:3px solid transparent;margin-bottom:-2px}
-.rtab span{font-weight:normal;font-size:12px;font-variant-numeric:tabular-nums}
-.rtab.on{color:var(--accent);border-bottom-color:var(--accent)}
-.rtab.live{margin-left:auto;align-self:center;margin-bottom:6px;border:1px solid var(--accent);border-radius:16px;
- padding:5px 14px;font-size:13px;color:var(--accent);background:var(--panel)}
-.rtab.live:hover{background:var(--accent);color:var(--accent-fg)} .rtab.live:disabled{opacity:.7;cursor:wait}
-.rtab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.rnote{flex-basis:100%;margin:6px 0 8px;font-size:12px;color:var(--muted)}
-.kwbox{display:flex;flex-direction:column;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
- padding:14px 16px;margin-bottom:16px}
-.kwbox label{font-size:13px;font-weight:600}
-.kwbox input{font:inherit;font-size:15px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;
- background:var(--bg);color:var(--fg);width:100%;max-width:480px;box-sizing:border-box}
-.kwbox input:focus{outline:2px solid var(--accent);outline-offset:1px}
-.kwquick{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
-.kwq{border:1px solid var(--line);background:var(--kw-bg);color:var(--kw-fg);border-radius:14px;padding:3px 10px;
- font:inherit;font-size:12px;cursor:pointer}
-.kwq:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.kwbox .rnote{margin:0}
-.reg{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);color:var(--fg)}
-.empty{color:var(--muted);font-size:13px;background:var(--panel);border:1px dashed var(--line);padding:12px;border-radius:8px}
-.foot{color:var(--muted);font-size:12px;margin-top:20px}
-@media(max-width:700px){td.org,td.per,th:nth-child(2),th:nth-child(3){display:none}}
+.wrap{max-width:1100px;margin:0 auto}
+.crumb{font-size:12px;color:var(--muted);margin:0 0 6px}
+h1{font-family:var(--serif);font-size:26px;font-weight:700;margin:0;letter-spacing:-.5px}
+.sub{color:var(--muted);font-size:13px;margin:6px 0 22px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+h2{font-family:var(--serif);font-size:18px;font-weight:700;margin:34px 0 8px;letter-spacing:-.3px}
+h3{font-size:14px;font-weight:700;margin:22px 0 6px}
+small{color:var(--muted);font-weight:normal;font-size:12px;font-family:var(--sans);margin-left:6px;letter-spacing:0}
+.summary{margin:14px 0 4px;font-size:14px}
+.summary b{font-variant-numeric:tabular-nums} .summary b.red{color:var(--red)}
+.sep{color:var(--muted);margin:0 6px}
+/* 탭: 서류철 모양 */
+.tabbar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;border-bottom:1px solid var(--rule)}
+.rtabs{display:flex;flex-wrap:wrap;gap:2px}
+.rtab{font:inherit;font-size:14px;color:var(--muted);background:var(--tab);border:1px solid var(--line);border-bottom:0;
+ padding:7px 16px;cursor:pointer;margin-bottom:-1px}
+.rtab span{font-size:12px;font-variant-numeric:tabular-nums}
+.rtab.on{background:var(--bg);color:var(--fg);font-weight:700;border-color:var(--rule);border-bottom:1px solid var(--bg)}
+.rtab:hover{color:var(--fg)}
+.rtab:focus-visible,.chip:focus-visible,.kwq:focus-visible,.kwgo:focus-visible{outline:2px solid var(--link);outline-offset:1px}
+.rtab.live{margin:0 0 6px auto;background:var(--bg);border:1px solid var(--line);font-size:13px;padding:4px 12px;color:var(--fg)}
+.rtab.live:hover{border-color:var(--rule)} .rtab.live:disabled{color:var(--muted);cursor:wait}
+.rnote{margin:8px 0 0;font-size:12px;color:var(--muted)}
+/* 검색 */
+.kwbox{margin:14px 0 0;padding:14px 16px;background:var(--head);border:1px solid var(--line)}
+.kwrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.kwrow label{font-weight:700;font-size:13px;margin-right:4px}
+.kwrow input{font:inherit;font-size:14px;padding:6px 8px;border:1px solid #999;border-radius:0;background:var(--bg);
+ color:var(--fg);flex:1;min-width:0;max-width:420px}
+.kwgo{font:inherit;font-size:13px;padding:6px 16px;border:1px solid var(--rule);background:var(--rule);color:var(--bg);cursor:pointer}
+.kwquick{margin:10px 0 0;font-size:12px;color:var(--muted)}
+.kwq{font:inherit;font-size:12px;border:0;background:none;padding:0;color:var(--link);cursor:pointer}
+.kwq:hover{text-decoration:underline}
+/* 표: 게시판 */
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;border-top:2px solid var(--rule);table-layout:fixed}
+col.w-no{width:52px} col.w-c{width:58px} col.w-org{width:190px} col.w-per{width:118px} col.w-dd{width:78px}
+th{background:var(--head);font-weight:700;font-size:13px;padding:9px 8px;border-bottom:1px solid var(--line);text-align:center}
+td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+tbody{counter-reset:n} tbody tr{counter-increment:n}
+td.no::before{content:counter(n)} td.no,td.c,td.dd{text-align:center;color:var(--muted);font-size:13px}
+td.t{word-break:keep-all;overflow-wrap:anywhere}
+td.t a{color:var(--link);text-decoration:none} td.t a:visited{color:var(--visited)}
+td.t a:hover{text-decoration:underline}
+tbody tr:hover td{background:var(--head)}
+.mk{font-size:12px;color:var(--muted);margin-right:4px} .mk.new{color:var(--red);font-weight:700}
+.kw{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+.sm{display:none}
+td.org{font-size:13px;color:var(--muted);word-break:keep-all}
+td.per{font-size:13px;color:var(--muted);text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
+.due{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap} .due.soon{color:var(--red);font-weight:700}
+.empty{margin:0;padding:22px 8px;text-align:center;color:var(--muted);border-top:2px solid var(--rule);border-bottom:1px solid var(--line)}
+/* 분야 선택: 글자 링크 */
+.chips{display:flex;flex-wrap:wrap;align-items:center;gap:2px 0;margin:4px 0 6px;font-size:13px}
+.chip{font:inherit;border:0;background:none;color:var(--muted);padding:2px 8px;cursor:pointer;border-left:1px solid var(--line)}
+.chip:first-child{border-left:0;padding-left:0}
+.chip.on{color:var(--fg);font-weight:700;text-decoration:underline;text-underline-offset:3px}
+.chip:hover{color:var(--fg)}
+.onlynew{margin-left:auto;font-size:13px;color:var(--muted)}
+.foot{color:var(--muted);font-size:12px;margin-top:36px;padding-top:12px;border-top:1px solid var(--line)}
+@media(max-width:760px){
+ col.w-org,col.w-per,col.w-c,th.org,th.per,th.c,td.org,td.per,td.c{display:none}
+ col.w-no{width:44px} col.w-dd{width:62px} th{white-space:nowrap;padding-inline:4px}
+ .sm{display:block;font-size:12px;color:var(--muted);margin-top:2px} .sm .c2{margin-right:6px}
+ .onlynew{margin-left:0;flex-basis:100%;margin-top:6px}
+ .rtab.live{margin-left:0}
+}
 """
     inner = f"""<title>경기 지원사업 공고</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@700&display=swap">
 <style>{css}</style><div class="wrap">
-<h1>경기 지원사업 공고 모아보기</h1>
-<div class="sub">{esc(stamp or today.strftime('%Y년 %m월 %d일'))} 기준 · 출처: {esc(scope)} · NEW = 지난번 확인 이후 새로 올라온 공고</div>
+<p class="crumb">경기도 기업지원 공고 모음</p>
+<h1>지원사업 공고</h1>
+<p class="sub">{esc(stamp or today.strftime('%Y년 %m월 %d일'))} 기준 &nbsp;|&nbsp; 자료 : {esc(scope)} &nbsp;|&nbsp; [새글] 지난번 확인 뒤 새로 올라온 공고</p>
 {body}
-<p class="foot">사업명을 누르면 이지비즈 공고 상세 페이지로 이동합니다.</p>
+<p class="foot">사업명을 누르면 경기기업비서(egbiz.or.kr)의 공고 원문으로 이동합니다. 신청 자격과 마감일은 원문에서 꼭 다시 확인하세요.</p>
 </div>{script}"""
     if share:  # claude.ai 공유 페이지용: 문서 골격은 게시할 때 자동으로 붙는다
         return inner
