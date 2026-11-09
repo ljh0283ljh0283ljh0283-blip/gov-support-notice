@@ -178,13 +178,22 @@ def build_html(items, cfg, today, for_mail=False, share=False):
                      ("s-soon", len(closing), f"{soon}일 내 마감"), ("s-kw", len(matched), "맞춤 키워드")])
     regions = [r for r in cfg.get("지역탭", []) if r in SIGUN]
     rtabs = ""
-    if regions and not for_mail:
-        rtabs = ('<div class="rtabs" role="tablist" aria-label="지역">'
-                 f'<button class="rtab on" data-r="*" role="tab">경기 전체 <span>{len(items)}</span></button>'
-                 + "".join(f'<button class="rtab" data-r="{esc(r)}" role="tab">{esc(r)} '
+    if not for_mail:
+        quick = "".join(f'<button type="button" class="kwq" data-q="{esc(k)}">{esc(k)}</button>'
+                        for k in cfg.get("관심키워드", []) if k)
+        rtabs = ('<div class="rtabs" role="tablist" aria-label="보기">'
+                 f'<button class="rtab on" data-r="*" role="tab" aria-selected="true">경기 전체 <span>{len(items)}</span></button>'
+                 + "".join(f'<button class="rtab" data-r="{esc(r)}" role="tab" aria-selected="false">{esc(r)} '
                            f'<span>{sum(in_region(i, r) for i in items)}</span></button>' for r in regions)
-                 + '<p class="rnote">지역 탭은 경기도 공통 공고와 그 시·군 이름이 들어간 공고를 보여주고, '
-                   '다른 시·군 전용 공고는 뺍니다.</p></div>')
+                 + '<button class="rtab" data-r="kw" role="tab" aria-selected="false">키워드 검색</button>'
+                 + '<p class="rnote" id="rnote">지역 탭은 경기도 공통 공고와 그 시·군 이름이 들어간 공고를 보여주고, '
+                   '다른 시·군 전용 공고는 뺍니다.</p></div>'
+                 + '<div class="kwbox" id="kwbox" hidden>'
+                   '<label for="kwq">찾을 단어</label>'
+                   '<input id="kwq" type="search" autocomplete="off" placeholder="예: 수출지원, 스마트공장">'
+                   f'<div class="kwquick"><span>자주 찾는 단어</span>{quick}</div>'
+                   '<p class="rnote" id="kwres">사업명·분야·기관에서 찾습니다. \'수출지원\'처럼 끝에 붙은 지원·사업은 떼고 찾고, '
+                   '띄어 쓰면 모든 단어가 들어간 공고, 쉼표(,)로 나누면 하나라도 들어간 공고를 보여줍니다.</p></div>')
 
     if for_mail:  # 메일 본문은 새 공고만 분야별로 짧게
         body = f'<div class="stats">{stats}</div>'
@@ -214,13 +223,24 @@ def build_html(items, cfg, today, for_mail=False, share=False):
 const $$=s=>[...document.querySelectorAll(s)];
 const tabs=$$('.rtab'),chips=$$('.chip'),nb=document.getElementById('onlynew');
 let reg='*',cat='*';
-const inReg=r=>reg==='*'||!r.dataset.reg||r.dataset.reg.split(',').includes(reg);
+const kwq=document.getElementById('kwq'),kwbox=document.getElementById('kwbox'),
+  kwres=document.getElementById('kwres'),rnote=document.getElementById('rnote'),kwHelp=kwres?kwres.textContent:'';
+const norm=s=>s.replace(/\\s+/g,'').toLowerCase();
+$$('tbody tr').forEach(r=>{r.dataset.t=norm(r.querySelector('td.t a').textContent+' '+r.dataset.cat+' '+r.querySelector('td.org').textContent);});
+/* 쉼표 = 또는, 띄어쓰기 = 그리고. '수출지원'처럼 끝에 붙은 지원·지원사업·사업은 떼고 찾는다 */
+const stem=w=>{const s=w.replace(/(지원사업|지원|사업)$/,'');return s.length>=2?s:w;};
+const terms=()=>kwq?kwq.value.split(',').map(g=>g.trim().split(/\\s+/).map(w=>stem(norm(w))).filter(Boolean)).filter(g=>g.length):[];
+const inReg=r=>{
+  if(reg==='kw'){const t=terms();return !t.length||t.some(g=>g.every(x=>r.dataset.t.includes(x)));}
+  return reg==='*'||!r.dataset.reg||r.dataset.reg.split(',').includes(reg);};
 const setN=(id,n)=>{const e=document.getElementById(id);if(e)e.textContent=n;};
 function apply(){
   $$('.blk').forEach(b=>{if(b.closest('#all'))return;let v=0;
     b.querySelectorAll('tbody tr').forEach(r=>{const ok=inReg(r);r.hidden=!ok;if(ok)v++;});
     const tw=b.querySelector('.tw');if(tw)tw.hidden=!v;b.querySelector('.empty').hidden=!!v;});
   const rows=$$('#all tbody tr').filter(inReg);
+  if(kwres){const t=kwq.value.trim();kwres.textContent=t?`'${t}' 검색 결과 ${rows.length}건`:kwHelp;}
+  try{localStorage.setItem('kwq',kwq.value);}catch(e){}
   setN('s-total',rows.length);setN('s-new',rows.filter(r=>r.dataset.new==='1').length);
   setN('s-soon',rows.filter(r=>r.dataset.soon==='1').length);setN('s-kw',rows.filter(r=>r.dataset.kw==='1').length);
   chips.forEach(c=>{const n=c.querySelector('.n');if(n)n.textContent=c.dataset.f==='*'?rows.length:rows.filter(r=>r.dataset.cat===c.dataset.f).length;});
@@ -230,7 +250,12 @@ function apply(){
   const none=document.getElementById('none');if(none)none.hidden=$$('#all section').some(s=>!s.hidden);
 }
 tabs.forEach(t=>t.onclick=()=>{tabs.forEach(x=>{x.classList.remove('on');x.setAttribute('aria-selected','false');});
-  t.classList.add('on');t.setAttribute('aria-selected','true');reg=t.dataset.r;apply();});
+  t.classList.add('on');t.setAttribute('aria-selected','true');reg=t.dataset.r;
+  if(kwbox){kwbox.hidden=reg!=='kw';rnote.hidden=reg==='kw';if(reg==='kw')kwq.focus();}
+  apply();});
+if(kwq){try{kwq.value=localStorage.getItem('kwq')||'';}catch(e){}
+  kwq.addEventListener('input',apply);
+  $$('.kwq').forEach(b=>b.onclick=()=>{kwq.value=b.dataset.q;apply();kwq.focus();});}
 chips.forEach(c=>c.onclick=()=>{chips.forEach(x=>x.classList.remove('on'));c.classList.add('on');cat=c.dataset.f;apply();});
 nb.onchange=apply;
 </script>"""
@@ -280,6 +305,17 @@ td.dd{width:80px;text-align:center}
 .rtab.on{color:var(--accent);border-bottom-color:var(--accent)}
 .rtab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .rnote{flex-basis:100%;margin:6px 0 8px;font-size:12px;color:var(--muted)}
+.kwbox{display:flex;flex-direction:column;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+ padding:14px 16px;margin-bottom:16px}
+.kwbox label{font-size:13px;font-weight:600}
+.kwbox input{font:inherit;font-size:15px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;
+ background:var(--bg);color:var(--fg);width:100%;max-width:480px;box-sizing:border-box}
+.kwbox input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.kwquick{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
+.kwq{border:1px solid var(--line);background:var(--kw-bg);color:var(--kw-fg);border-radius:14px;padding:3px 10px;
+ font:inherit;font-size:12px;cursor:pointer}
+.kwq:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.kwbox .rnote{margin:0}
 .reg{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);color:var(--fg)}
 .empty{color:var(--muted);font-size:13px;background:var(--panel);border:1px dashed var(--line);padding:12px;border-radius:8px}
 .foot{color:var(--muted);font-size:12px;margin-top:20px}
