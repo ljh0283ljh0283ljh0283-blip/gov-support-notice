@@ -10,6 +10,7 @@ import csv
 import html
 import json
 import os
+import re
 import smtplib
 import sys
 import urllib.parse
@@ -27,6 +28,11 @@ GBSA_NAME = "경기도경제과학진흥원"
 CATEGORY_ORDER = ["기술", "경영", "수출", "금융", "인력", "내수", "창업", "제도", "동반성장", "소상공", "기타"]
 STATUS_KO = {"apply": "접수중", "ready": "준비중"}
 PAGE_UNIT = 200
+# 경기도 31개 시·군 (공고 제목에 이름이 있으면 그 지역 전용 공고로 본다)
+SIGUN = ["가평", "고양", "과천", "광명", "광주", "구리", "군포", "김포", "남양주", "동두천", "부천", "성남",
+         "수원", "시흥", "안산", "안성", "안양", "양주", "양평", "여주", "연천", "오산", "용인", "의왕",
+         "의정부", "이천", "파주", "평택", "포천", "하남", "화성"]
+SIGUN_RE = {s: re.compile(("(?<!남)" if s == "양주" else "") + re.escape(s)) for s in SIGUN}
 
 
 # ---------------------------------------------------------------- 수집
@@ -101,6 +107,7 @@ def organize(items, cfg, seen, today):
             continue
         it["keywords"] = [k for k in kws if k.lower() in t]
         it["gbsa"] = GBSA_NAME in it["org"]
+        it["regions"] = [s for s, rx in SIGUN_RE.items() if rx.search(it["title"])]
         if first_run:  # 첫 실행: 최근 7일 안에 접수 시작한 공고만 NEW로 본다
             it["new"] = it["start"] >= (today - timedelta(days=7)).isoformat()
         else:
@@ -126,23 +133,33 @@ def dday_badge(it, soon):
     return f'<span class="b {cls}">{label}</span>'
 
 
+def is_soon(it, soon):
+    return it["dday"] is not None and it["dday"] <= soon
+
+
+def in_region(it, region):
+    """지역 탭에 보일 공고: 특정 시·군이 적히지 않은 경기 공통 공고 + 그 시·군 공고"""
+    return not it["regions"] or region in it["regions"]
+
+
 def row(it, soon):
     period = "예산 소진 시까지" if it["until_budget"] else f'{esc(it["start"])} ~ {esc(it["end"])}'
     tags = "".join(f'<span class="kw">{esc(k)}</span>' for k in it["keywords"])
     new = '<span class="b new">NEW</span>' if it["new"] else ""
     gbsa = '<span class="b gbsa">진흥원</span>' if it["gbsa"] else ""
-    return (f'<tr data-cat="{esc(it["category"])}" data-new="{int(it["new"])}">'
+    reg = "".join(f'<span class="reg">{esc(r)}</span>' for r in it["regions"])
+    return (f'<tr data-cat="{esc(it["category"])}" data-new="{int(it["new"])}" data-reg="{esc(",".join(it["regions"]))}"'
+            f' data-soon="{int(is_soon(it, soon))}" data-kw="{int(bool(it["keywords"]))}">'
             f'<td class="t"><a href="{esc(it["url"])}" target="_blank">{esc(it["title"])}</a>'
-            f'<div class="meta">{new}{gbsa}<span class="cat">{esc(it["category"])}</span>{tags}</div></td>'
+            f'<div class="meta">{new}{gbsa}{reg}<span class="cat">{esc(it["category"])}</span>{tags}</div></td>'
             f'<td class="org">{esc(it["org"])}</td><td class="per">{period}</td>'
             f'<td class="dd">{dday_badge(it, soon)}</td></tr>')
 
 
 def table(items, soon, empty="해당 공고가 없습니다."):
-    if not items:
-        return f'<p class="empty">{empty}</p>'
-    return ('<div class="tw"><table><thead><tr><th>사업명</th><th>기관</th><th>접수기간</th><th>마감</th></tr></thead><tbody>'
-            + "".join(row(i, soon) for i in items) + "</tbody></table></div>")
+    tbl = ('<div class="tw"><table><thead><tr><th>사업명</th><th>기관</th><th>접수기간</th><th>마감</th></tr></thead><tbody>'
+           + "".join(row(i, soon) for i in items) + "</tbody></table></div>") if items else ""
+    return f'<div class="blk">{tbl}<p class="empty"{" hidden" if items else ""}>{empty}</p></div>'
 
 
 def build_html(items, cfg, today, for_mail=False, share=False):
@@ -155,10 +172,19 @@ def build_html(items, cfg, today, for_mail=False, share=False):
         by_cat.setdefault(i["category"], []).append(i)
     cats = [c for c in CATEGORY_ORDER if c in by_cat] + [c for c in by_cat if c not in CATEGORY_ORDER]
 
-    scope = "경기도경제과학진흥원 직접 공고" if cfg.get("진흥원_공고만") else "경기기업비서(이지비즈) 경기도 전체 지원사업"
-    stats = "".join(f'<div class="stat"><b>{n}</b><span>{l}</span></div>' for n, l in
-                    [(len(items), "접수중·준비중"), (len(new), "새 공고"), (len(closing), f"{soon}일 내 마감"),
-                     (len(matched), "맞춤 키워드")])
+    scope = "경기도경제과학진흥원 직접 공고" if cfg.get("진흥원_공고만") else "경기기업비서(이지비즈) 분야별지원사업"
+    stats = "".join(f'<div class="stat"><b id="{sid}">{n}</b><span>{l}</span></div>' for sid, n, l in
+                    [("s-total", len(items), "접수중·준비중"), ("s-new", len(new), "새 공고"),
+                     ("s-soon", len(closing), f"{soon}일 내 마감"), ("s-kw", len(matched), "맞춤 키워드")])
+    regions = [r for r in cfg.get("지역탭", []) if r in SIGUN]
+    rtabs = ""
+    if regions and not for_mail:
+        rtabs = ('<div class="rtabs" role="tablist" aria-label="지역">'
+                 f'<button class="rtab on" data-r="*" role="tab">경기 전체 <span>{len(items)}</span></button>'
+                 + "".join(f'<button class="rtab" data-r="{esc(r)}" role="tab">{esc(r)} '
+                           f'<span>{sum(in_region(i, r) for i in items)}</span></button>' for r in regions)
+                 + '<p class="rnote">지역 탭은 경기도 공통 공고와 그 시·군 이름이 들어간 공고를 보여주고, '
+                   '다른 시·군 전용 공고는 뺍니다.</p></div>')
 
     if for_mail:  # 메일 본문은 새 공고만 분야별로 짧게
         body = f'<div class="stats">{stats}</div>'
@@ -171,26 +197,41 @@ def build_html(items, cfg, today, for_mail=False, share=False):
             body += f'<h2>{esc(c)} <small>{len(new_by_cat[c])}건</small></h2>' + table(new_by_cat[c], soon)
         body += '<p class="foot">전체 목록은 첨부한 리포트 파일을 열어 보세요.</p>'
     else:
-        chips = '<button class="chip on" data-f="*">전체</button>' + "".join(
-            f'<button class="chip" data-f="{esc(c)}">{esc(c)} {len(by_cat[c])}</button>' for c in cats)
-        body = (f'<div class="stats">{stats}</div>'
+        chips = f'<button class="chip on" data-f="*">전체 <span class="n">{len(items)}</span></button>' + "".join(
+            f'<button class="chip" data-f="{esc(c)}">{esc(c)} <span class="n">{len(by_cat[c])}</span></button>' for c in cats)
+        body = (f'{rtabs}<div class="stats">{stats}</div>'
                 f'<h2>우리 회사 맞춤 <small>관심 키워드: {esc(", ".join(cfg.get("관심키워드", [])))}</small></h2>'
                 + table(matched, soon, "관심 키워드에 맞는 공고가 없습니다.")
                 + f'<h2>마감 임박 <small>{soon}일 이내</small></h2>' + table(closing, soon)
                 + f'<h2>분야별 전체</h2><div class="chips">{chips}'
                   f'<label class="onlynew"><input type="checkbox" id="onlynew"> 새 공고만</label></div>'
                 + '<div id="all">' + "".join(
-                    f'<section data-cat="{esc(c)}"><h3>{esc(c)} <small>{len(by_cat[c])}건</small></h3>'
-                    + table(by_cat[c], soon) + "</section>" for c in cats) + "</div>")
+                    f'<section data-cat="{esc(c)}"><h3>{esc(c)} <small><span class="n">{len(by_cat[c])}</span>건</small></h3>'
+                    + table(by_cat[c], soon) + "</section>" for c in cats)
+                + '<p class="empty" id="none" hidden>조건에 맞는 공고가 없습니다.</p></div>')
 
     script = "" if for_mail else """<script>
-const chips=[...document.querySelectorAll('.chip')],nb=document.getElementById('onlynew');
-let cur='*';
-function apply(){document.querySelectorAll('#all section').forEach(s=>{
-  const show=cur==='*'||s.dataset.cat===cur;let vis=0;
-  s.querySelectorAll('tbody tr').forEach(r=>{const ok=!nb.checked||r.dataset.new==='1';r.style.display=ok?'':'none';if(ok)vis++;});
-  s.style.display=show&&vis?'':'none';});}
-chips.forEach(c=>c.onclick=()=>{chips.forEach(x=>x.classList.remove('on'));c.classList.add('on');cur=c.dataset.f;apply();});
+const $$=s=>[...document.querySelectorAll(s)];
+const tabs=$$('.rtab'),chips=$$('.chip'),nb=document.getElementById('onlynew');
+let reg='*',cat='*';
+const inReg=r=>reg==='*'||!r.dataset.reg||r.dataset.reg.split(',').includes(reg);
+const setN=(id,n)=>{const e=document.getElementById(id);if(e)e.textContent=n;};
+function apply(){
+  $$('.blk').forEach(b=>{if(b.closest('#all'))return;let v=0;
+    b.querySelectorAll('tbody tr').forEach(r=>{const ok=inReg(r);r.hidden=!ok;if(ok)v++;});
+    const tw=b.querySelector('.tw');if(tw)tw.hidden=!v;b.querySelector('.empty').hidden=!!v;});
+  const rows=$$('#all tbody tr').filter(inReg);
+  setN('s-total',rows.length);setN('s-new',rows.filter(r=>r.dataset.new==='1').length);
+  setN('s-soon',rows.filter(r=>r.dataset.soon==='1').length);setN('s-kw',rows.filter(r=>r.dataset.kw==='1').length);
+  chips.forEach(c=>{const n=c.querySelector('.n');if(n)n.textContent=c.dataset.f==='*'?rows.length:rows.filter(r=>r.dataset.cat===c.dataset.f).length;});
+  $$('#all section').forEach(s=>{let v=0;
+    s.querySelectorAll('tbody tr').forEach(r=>{const ok=inReg(r)&&(!nb.checked||r.dataset.new==='1');r.hidden=!ok;if(ok)v++;});
+    s.querySelector('h3 .n').textContent=v;s.hidden=!((cat==='*'||s.dataset.cat===cat)&&v);});
+  const none=document.getElementById('none');if(none)none.hidden=$$('#all section').some(s=>!s.hidden);
+}
+tabs.forEach(t=>t.onclick=()=>{tabs.forEach(x=>{x.classList.remove('on');x.setAttribute('aria-selected','false');});
+  t.classList.add('on');t.setAttribute('aria-selected','true');reg=t.dataset.r;apply();});
+chips.forEach(c=>c.onclick=()=>{chips.forEach(x=>x.classList.remove('on'));c.classList.add('on');cat=c.dataset.f;apply();});
 nb.onchange=apply;
 </script>"""
 
@@ -231,6 +272,15 @@ td.dd{width:80px;text-align:center}
 .chip.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .onlynew{margin-left:auto;font-size:13px}
+[hidden]{display:none!important}
+.rtabs{display:flex;flex-wrap:wrap;gap:0;align-items:flex-end;border-bottom:2px solid var(--line);margin-bottom:16px}
+.rtab{border:0;background:none;color:var(--muted);font:inherit;font-size:15px;font-weight:600;padding:8px 18px;cursor:pointer;
+ border-bottom:3px solid transparent;margin-bottom:-2px}
+.rtab span{font-weight:normal;font-size:12px;font-variant-numeric:tabular-nums}
+.rtab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.rtab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.rnote{flex-basis:100%;margin:6px 0 8px;font-size:12px;color:var(--muted)}
+.reg{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);color:var(--fg)}
 .empty{color:var(--muted);font-size:13px;background:var(--panel);border:1px dashed var(--line);padding:12px;border-radius:8px}
 .foot{color:var(--muted);font-size:12px;margin-top:20px}
 @media(max-width:700px){td.org,td.per,th:nth-child(2),th:nth-child(3){display:none}}
@@ -251,9 +301,9 @@ td.dd{width:80px;text-align:center}
 def write_csv(items, path):
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
-        w.writerow(["새공고", "분야", "사업명", "기관", "상태", "접수시작", "접수마감", "남은일수", "맞춤키워드", "링크"])
+        w.writerow(["새공고", "분야", "지역", "사업명", "기관", "상태", "접수시작", "접수마감", "남은일수", "맞춤키워드", "링크"])
         for i in items:
-            w.writerow(["NEW" if i["new"] else "", i["category"], i["title"], i["org"], i["status"],
+            w.writerow(["NEW" if i["new"] else "", i["category"], ", ".join(i["regions"]) or "경기 공통", i["title"], i["org"], i["status"],
                         i["start"], "예산소진시" if i["until_budget"] else i["end"],
                         "" if i["dday"] is None else i["dday"], ", ".join(i["keywords"]), i["url"]])
 
