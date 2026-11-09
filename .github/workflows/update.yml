@@ -1,0 +1,51 @@
+name: 지원사업 공고 갱신
+
+on:
+  schedule:
+    - cron: "30 23 * * 0-4"   # 한국시간 평일(월~금) 오전 8:30
+  workflow_dispatch:           # Actions 탭에서 수동 실행
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Seoul
+      PYTHONIOENCODING: utf-8
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 공고 수집·정리
+        run: python gov_support_watch.py
+
+      - name: 본 공고 기록 저장 (다음 실행의 NEW 판단용)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/seen.json
+          git diff --cached --quiet || git commit -m "공고 기록 갱신 $(date +%F) [skip ci]"
+          git push
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,7 @@
+reports/
+share/
+docs/
+data/run_log.txt
+__pycache__/
+*.pyc
+/*.html
