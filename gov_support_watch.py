@@ -34,6 +34,27 @@ SIGUN = ["가평", "고양", "과천", "광명", "광주", "구리", "군포", "
          "수원", "시흥", "안산", "안성", "안양", "양주", "양평", "여주", "연천", "오산", "용인", "의왕",
          "의정부", "이천", "파주", "평택", "포천", "하남", "화성"]
 SIGUN_RE = {s: re.compile(("(?<!남)" if s == "양주" else "") + re.escape(s)) for s in SIGUN}
+# 경기도 밖 시·도 (제목이나 기관 이름에 있으면 그 지역 공고로 본다)
+# '부산물', '대전환' 같은 낱말과 경기도 광주시는 다른 지역으로 잘못 보지 않게 걸러낸다
+PROVINCE_RE = {
+    "서울": re.compile(r"서울"), "인천": re.compile(r"인천"), "부산": re.compile(r"부산(?!물)"),
+    "대구": re.compile(r"대구(?!경)"), "대전": re.compile(r"대전(?!환)"), "울산": re.compile(r"울산"),
+    "세종": re.compile(r"세종(?!대왕|학당)"), "광주광역": re.compile(r"광주광역|\[광주\]|광주(?:테크노|정보|과학|경제|창조)"),
+    "강원": re.compile(r"강원"), "충북": re.compile(r"충북|충청북"), "충남": re.compile(r"충남|충청남"),
+    "전북": re.compile(r"전북|전라북"), "전남": re.compile(r"전남|전라남"), "경북": re.compile(r"경북|경상북"),
+    "경남": re.compile(r"경남|경상남"), "제주": re.compile(r"제주"),
+    "비수도권": re.compile(r"비수도권"),  # 경기도 기업은 신청할 수 없는 공고
+}
+# 경기도 안의 권역 공고: 안산이 속한 권역을 확인하기 전까지는 빼지 않고 표시만 한다
+ZONE_RE = re.compile(r"(서부|동부|남부|북부|북동부|중부)권역?")
+
+
+def detect_regions(title, org):
+    """공고의 지역 표시: 제목의 경기도 시·군 + 제목·기관의 다른 시·도. 없으면 경기도 전체·전국 공고."""
+    found = [s for s, rx in SIGUN_RE.items() if rx.search(title)]
+    text = f"{title} {org}"
+    found += [p for p, rx in PROVINCE_RE.items() if rx.search(text)]
+    return found
 
 
 # ---------------------------------------------------------------- 수집
@@ -108,7 +129,9 @@ def organize(items, cfg, seen, today):
             continue
         it["keywords"] = [k for k in kws if k.lower() in t]
         it["gbsa"] = GBSA_NAME in it["org"]
-        it["regions"] = [s for s, rx in SIGUN_RE.items() if rx.search(it["title"])]
+        it["regions"] = detect_regions(it["title"], it["org"])
+        z = ZONE_RE.search(it["title"])
+        it["zone"] = f"경기 {z.group(1)}권" if z else ""
         if first_run:  # 첫 실행: 최근 7일 안에 접수 시작한 공고만 NEW로 본다
             it["new"] = it["start"] >= (today - timedelta(days=7)).isoformat()
         else:
@@ -143,7 +166,7 @@ def is_soon(it, soon):
 
 
 def in_region(it, region):
-    """지역 탭에 보일 공고: 특정 시·군이 적히지 않은 경기 공통 공고 + 그 시·군 공고"""
+    """지역 탭에 보일 공고: 그 시·군 이름이 있는 공고 + 지역 표시가 없는 경기도 전체·전국 공고"""
     return not it["regions"] or region in it["regions"]
 
 
@@ -151,7 +174,8 @@ def row(it, soon):
     period = "예산 소진 시까지" if it["until_budget"] else f'{short_date(it["start"])} ~ {short_date(it["end"])}'
     marks = ('<span class="mk new">[새글]</span>' if it["new"] else "") + \
             ('<span class="mk">[진흥원]</span>' if it["gbsa"] else "") + \
-            "".join(f'<span class="mk">[{esc(r)}]</span>' for r in it["regions"])
+            "".join(f'<span class="mk">[{esc(r)}]</span>' for r in it["regions"]) + \
+            (f'<span class="mk">[{esc(it["zone"])}]</span>' if it.get("zone") else "")
     kw = f'<span class="kw">관심: {esc("·".join(it["keywords"]))}</span>' if it["keywords"] else ""
     return (f'<tr data-cat="{esc(it["category"])}" data-new="{int(it["new"])}" data-reg="{esc(",".join(it["regions"]))}"'
             f' data-soon="{int(is_soon(it, soon))}" data-kw="{int(bool(it["keywords"]))}">'
@@ -198,8 +222,8 @@ def build_html(items, cfg, today, for_mail=False, share=False, stamp=None, live_
                  + ('<button class="rtab live" data-live="1" type="button" title="이지비즈에서 지금 공고를 다시 가져옵니다">'
                     '최신 정보 불러오기</button>' if live_tab else '')
                  + '</div>'
-                 + '<p class="rnote" id="rnote">※ 지역 탭에는 경기도 공통 공고와 그 시·군 이름이 들어간 공고만 나오고, '
-                   '다른 시·군 전용 공고는 빠집니다.</p>'
+                 + '<p class="rnote" id="rnote">※ 지역 탭에는 제목에 그 시·군 이름이 있는 공고와, 지역 표시가 없는 '
+                   '경기도 전체·전국 공고만 나옵니다. 다른 시·군이나 다른 시·도(서울·인천 등) 공고는 빠집니다.</p>'
                  + '<form class="kwbox" id="kwbox" hidden onsubmit="return false">'
                    '<div class="kwrow"><label for="kwq">검색어</label>'
                    '<input id="kwq" type="search" autocomplete="off" placeholder="예: 수출지원, 스마트공장">'
